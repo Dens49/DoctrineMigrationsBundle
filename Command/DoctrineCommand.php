@@ -28,78 +28,53 @@ use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
  */
 abstract class DoctrineCommand extends BaseCommand
 {
-    public static function configureMigrations(ContainerInterface $container, Configuration $configuration)
-    {
-        if (!$configuration->getMigrationsDirectory()) {
-            $dir = $container->getParameter('doctrine_migrations.dir_name');
-            if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
-                $error = error_get_last();
-                throw new \ErrorException($error['message']);
-            }
-            $configuration->setMigrationsDirectory($dir);
-        } else {
-            $dir = $configuration->getMigrationsDirectory();
-            // class Kernel has method getKernelParameters with some of the important path parameters
-            $pathPlaceholderArray = array('kernel.root_dir', 'kernel.cache_dir', 'kernel.logs_dir');
-            foreach ($pathPlaceholderArray as $pathPlaceholder) {
-                if ($container->hasParameter($pathPlaceholder) && preg_match('/\%'.$pathPlaceholder.'\%/', $dir)) {
-                    $dir = str_replace('%'.$pathPlaceholder.'%', $container->getParameter($pathPlaceholder), $dir);
-                }
-            }
-            if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
-                $error = error_get_last();
-                throw new \ErrorException($error['message']);
-            }
-            $configuration->setMigrationsDirectory($dir);
-        }
-        if (!$configuration->getMigrationsNamespace()) {
-            $configuration->setMigrationsNamespace($container->getParameter('doctrine_migrations.namespace'));
-        }
-        if (!$configuration->getName()) {
-            $configuration->setName($container->getParameter('doctrine_migrations.name'));
-        }
-        // For backward compatibility, need use a table from parameters for overwrite the default configuration
-        if (!($configuration instanceof AbstractFileConfiguration) || !$configuration->getMigrationsTableName()) {
-            $configuration->setMigrationsTableName($container->getParameter('doctrine_migrations.table_name'));
-        }
-        // Migrations is not register from configuration loader
-        if (!($configuration instanceof AbstractFileConfiguration)) {
-            $configuration->registerMigrationsFromDirectory($configuration->getMigrationsDirectory());
-        }
-
-        $organizeMigrations = $container->getParameter('doctrine_migrations.organize_migrations');
-        switch ($organizeMigrations) {
-            case Configuration::VERSIONS_ORGANIZATION_BY_YEAR:
-                $configuration->setMigrationsAreOrganizedByYear(true);
-                break;
-
-            case Configuration::VERSIONS_ORGANIZATION_BY_YEAR_AND_MONTH:
-                $configuration->setMigrationsAreOrganizedByYearAndMonth(true);
-                break;
-
-            case false:
-                break;
-
-            default:
-                throw new InvalidArgumentException('Invalid value for "doctrine_migrations.organize_migrations" parameter.');
-        }
-
-        self::injectContainerToMigrations($container, $configuration->getMigrations());
+  public static function configureMigrations(ContainerInterface $container, Configuration $configuration, $em)
+  {
+    if ($container->hasParameter('doctrine_migrations.default_entity_manager')) {
+      $configurationPrefix = 'doctrine_migrations.default_entity_manager';
+    } elseif ($container->hasParameter('doctrine_migrations.' . $em)) {
+      $configurationPrefix = 'doctrine_migrations.' . $em;
+    } else {
+      if (null === $em) {
+	$message = 'There is no doctrine migrations configuration available for the default entity manager';
+      } else {
+	$message = sprintf(
+	  'There is no doctrine migrations configuration available for the %s entity manager',
+	  $em
+	);
+      }
+      throw new \InvalidArgumentException($message);
     }
 
-    /**
-     * @param ContainerInterface $container
-     * @param array $versions
-     *
-     * Injects the container to migrations aware of it
-     */
-    private static function injectContainerToMigrations(ContainerInterface $container, array $versions)
-    {
-        foreach ($versions as $version) {
-            $migration = $version->getMigration();
-            if ($migration instanceof ContainerAwareInterface) {
-                $migration->setContainer($container);
-            }
-        }
+    $containerParameters = $container->getParameter($configurationPrefix);
+
+    $dir = $containerParameters['dir_name'];
+    if (!file_exists($dir)) {
+      mkdir($dir, 0777, true);
     }
+
+    $configuration->setMigrationsNamespace($containerParameters['namespace']);
+    $configuration->setMigrationsDirectory($dir);
+    $configuration->registerMigrationsFromDirectory($dir);
+    $configuration->setName($containerParameters['name']);
+    $configuration->setMigrationsTableName($containerParameters['table_name']);
+
+    self::injectContainerToMigrations($container, $configuration->getMigrations());
+  }
+
+  /**
+   * @param ContainerInterface $container
+   * @param array $versions
+   *
+   * Injects the container to migrations aware of it
+   */
+  private static function injectContainerToMigrations(ContainerInterface $container, array $versions)
+  {
+    foreach ($versions as $version) {
+      $migration = $version->getMigration();
+      if ($migration instanceof ContainerAwareInterface) {
+	$migration->setContainer($container);
+      }
+    }
+  }
 }
